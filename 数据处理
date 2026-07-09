@@ -1,0 +1,82 @@
+class FileCrypto:
+    def __init__(self, key_path: str = DEFAULT_KEY_FILE):
+        self.key_path = key_path
+        self.key = self.load_or_create_key()
+        self.fernet = Fernet(self.key)
+
+    def load_or_create_key(self) -> bytes:
+        if os.path.exists(self.key_path):
+            with open(self.key_path, "rb") as f:
+                return f.read()
+        new_key = Fernet.generate_key()
+        with open(self.key_path, "wb") as f:
+            f.write(new_key)
+        return new_key
+
+    def export_key(self, save_path: str) -> Tuple[bool, str]:
+        try:
+            with open(self.key_path, "rb") as src, open(save_path, "wb") as dst:
+                dst.write(src.read())
+            return True, "密钥导出成功"
+        except Exception as e:
+            return False, f"导出失败：{str(e)}"
+
+    def import_key(self, load_path: str) -> Tuple[bool, str]:
+        try:
+            with open(load_path, "rb") as f:
+                new_key = f.read()
+            Fernet(new_key)
+            with open(self.key_path, "wb") as f:
+                f.write(new_key)
+            self.key = new_key
+            self.fernet = Fernet(new_key)
+            return True, "密钥导入成功，已切换加密器"
+        except InvalidToken:
+            return False, "密钥格式非法"
+        except Exception as e:
+            return False, f"导入失败：{str(e)}"
+
+    def encrypt_file(self, file_path: str, backup: bool = True) -> Tuple[bool, str]:
+        if not os.path.isfile(file_path):
+            return False, "文件不存在"
+        if file_path.endswith(SHIELD_SUFFIX):
+            return False, "已是加密文件，无需重复加密"
+
+        try:
+            chunk_size = 1024 * 1024
+            with open(file_path, "rb") as f_in:
+                raw_data = f_in.read()
+                encrypted_data = self.fernet.encrypt(raw_data)
+            new_path = file_path + SHIELD_SUFFIX
+            with open(new_path, "wb") as f_out:
+                f_out.write(encrypted_data)
+            if not backup:
+                os.remove(file_path)
+            return True, f"加密完成：{os.path.basename(new_path)}"
+        except PermissionError:
+            return False, "文件权限不足，无法读写"
+        except Exception as e:
+            return False, f"加密异常：{str(e)}"
+
+    def decrypt_file(self, file_path: str, backup: bool = True) -> Tuple[bool, str]:
+        if not file_path.endswith(SHIELD_SUFFIX):
+            return False, f"仅支持{SHIELD_SUFFIX}加密文件"
+        if not os.path.isfile(file_path):
+            return False, "文件不存在"
+
+        try:
+            with open(file_path, "rb") as f_in:
+                enc_data = f_in.read()
+                dec_data = self.fernet.decrypt(enc_data)
+            new_path = file_path[:-len(SHIELD_SUFFIX)]
+            with open(new_path, "wb") as f_out:
+                f_out.write(dec_data)
+            if not backup:
+                os.remove(file_path)
+            return True, f"解密完成：{os.path.basename(new_path)}"
+        except InvalidToken:
+            return False, "密钥不匹配或文件已损坏"
+        except PermissionError:
+            return False, "文件权限不足"
+        except Exception as e:
+            return False, f"解密异常：{str(e)}"
